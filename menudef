@@ -1,0 +1,59 @@
+// Tuning a recogniser is done by feel, in the headset, where there is no
+// keyboard -- so every dial that decides whether a gesture fires is here
+// rather than console-only.
+
+OptionMenu "RSGMain"
+{
+	Title "Gestures"
+	StaticText "A shape drawn in the air, matched against", "gray"
+	StaticText "templates by dynamic time warping -- so the", "gray"
+	StaticText "same shape performed faster or slower still", "gray"
+	StaticText "matches.", "gray"
+	StaticText ""
+	Option "Enabled", "rsg_enabled", "OnOff"
+	Option "Debug printing", "rsg_debug", "OnOff"
+	StaticText ""
+	StaticText "Raise your main hand above your head with", "gold"
+	StaticText "grip held to open gesture mode, then draw.", "gold"
+	StaticText ""
+	Submenu "Entry and exit", "RSGEntry"
+	Submenu "Matching", "RSGMatch"
+}
+
+OptionMenu "RSGEntry"
+{
+	Title "Entry and exit"
+	StaticText "Gesture mode is entered deliberately, or every", "gray"
+	StaticText "arm movement in a fight is a candidate gesture.", "gray"
+	StaticText ""
+	Slider "Hold to enter (tics)", "rsg_entry_hold", 5, 70, 1, 0
+	StaticText "35 tics = 1 second.", "gold"
+	StaticText ""
+	Slider "Close after idle (tics)", "rsg_idle_exit", 70, 1050, 35, 0
+	StaticText "Mode also closes when you take damage.", "gray"
+}
+
+OptionMenu "RSGMatch"
+{
+	Title "Matching"
+	Slider "Stroke window (tics)", "rsg_window", 10, 105, 5, 0
+	StaticText "How much recent motion one stroke is", "gray"
+	StaticText "matched over.", "gray"
+	StaticText ""
+	Slider "Tolerance (map units)", "rsg_tolerance", 2, 60, 1, 0
+	StaticText "Turn this UP when a gesture you are drawing", "gold"
+	StaticText "correctly refuses to fire.", "gold"
+	StaticText ""
+	Slider "Confidence needed", "rsg_confidence", 0.0, 1.0, 0.05, 2
+	StaticText "Turn this UP when unrelated arm movement is", "gold"
+	StaticText "firing gestures.", "gold"
+	StaticText ""
+	Slider "Minimum stroke size", "rsg_min_extent", 0, 40, 1, 0
+	StaticText "A hand holding still draws a tiny tight path", "gray"
+	StaticText "that would otherwise match almost anything.", "gray"
+}
+
+AddOptionMenu "OptionsMenu"
+{
+	Submenu "Gestures", "RSGMain"
+}

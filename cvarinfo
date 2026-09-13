@@ -1,0 +1,53 @@
+// RS_GESTURES -- CVars
+//
+// A gesture is a shape drawn in the air, matched against recorded templates by
+// dynamic time warping so the same shape performed faster or slower still
+// matches. Nothing here rewrites engine state; it reads the hand and head pose
+// the engine already publishes every tic and decides whether the last second of
+// motion looks like a template.
+//
+// All user, not server. Controller pose is local by definition -- the engine
+// reads it from this machine's XR runtime, and usercmd_t carries no off-hand
+// pose at all -- so there is nothing here another peer could meaningfully be
+// told. Server cvars would also put every tuning tweak on the wire for no
+// reason. See RS_Darkness's cvarinfo for what per-tic server cvar writes cost.
+
+// ---------------------------------------------------------------- master --
+// Off by default. Capture costs a handful of doubles per tic and matching
+// costs a DTW pass per eligible template, and nobody who is not using gestures
+// should pay either.
+user bool  rsg_enabled = false;
+
+// Prints mode open/close and every match with its confidence.
+user bool  rsg_debug   = false;
+
+// ----------------------------------------------------------------- entry --
+// Gesture mode has to be entered deliberately, or every arm movement in a
+// firefight is a candidate gesture. Entry is the main hand raised above head
+// height with grip held -- distinct, and it needs no finger tracking, which
+// this engine does not have (only two capacitive touch bits, not curl).
+//
+// Tics the pose must be held. 35 tics = 1 second.
+user int   rsg_entry_hold = 18;
+
+// Tics of gesture mode with nothing matching before it closes itself. Mode
+// also closes on damage: being hit is exactly when you stopped meaning to cast.
+user int   rsg_idle_exit  = 350;
+
+// --------------------------------------------------------------- matching --
+// Tics of motion a single stroke is matched over.
+user int   rsg_window     = 35;
+
+// Average per-step deviation, in map units, at which confidence reaches zero.
+// Larger is more forgiving. This is the dial to turn when a gesture you are
+// performing correctly will not fire.
+user float rsg_tolerance  = 14.0;
+
+// Confidence a match must beat, 0 to 1. Raise it if unrelated arm movement is
+// firing gestures.
+user float rsg_confidence = 0.35;
+
+// A stroke whose furthest point is nearer than this to its start is a hand
+// holding still, not a gesture. Without a floor here a motionless hand draws a
+// tiny tight path that will cheerfully match anything.
+user float rsg_min_extent = 8.0;

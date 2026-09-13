@@ -1,0 +1,9 @@
+// Without these the handlers never register and nothing happens at all.
+//
+// Capture and matching are separate handlers on purpose: the capture ring is
+// useful to anything wanting recent hand motion, and a second consumer should
+// not have to drag the matcher in with it.
+GameInfo
+{
+	AddEventHandlers = "RSG_Capture", "RSG_Matcher", "RSG_DemoActions"
+}

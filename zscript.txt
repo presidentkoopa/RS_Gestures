@@ -1,0 +1,11 @@
+// RS_GESTURES -- recognising a shape drawn in the air with a controller.
+//
+// Engine is UZDXREMA. Everything here is pure ZScript: the per-tic hand and
+// head pose this needs (AttackPos, MainHandRoll, OffhandPos, HmdPos and the
+// grip fields) is already published natively on Actor every tic, so nothing
+// in the engine had to change to make this possible.
+version "4.12"
+
+#include "zscript/rsg_capture.zs"
+#include "zscript/rsg_match.zs"
+#include "zscript/rsg_demo_actions.zs"
