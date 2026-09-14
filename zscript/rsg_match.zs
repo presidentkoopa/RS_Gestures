@@ -167,6 +167,28 @@ class RSG_Template play
 	}
 }
 
+// Stroke segmentation: BUTTON-DELIMITED, not a sliding window.
+//
+// The first cut of this matcher ran DTW every tic against the last
+// rsg_window tics of the ring buffer, gated by a rearm cooldown after each
+// fire and a minimum-extent floor to reject a hand holding still. Three
+// separate heuristics, all approximating one thing a sliding window cannot
+// know on its own: when did the gesture actually start and end.
+//
+// MageVR-Reborn's published design (README only, no source -- see
+// vr-reference-study-unified.md Part 6) answers this directly: hold a button
+// to trace, release to end the stroke. That is a real signal, not an
+// approximation, and it deletes the rearm cooldown outright -- there is
+// nothing to re-arm when a stroke only ever gets matched once, exactly when
+// it completes.
+//
+// Reuses GripHeldMain rather than the trigger, deliberately: entry already
+// holds grip (raise the hand, hold grip, mode opens), so drawing is the same
+// grip carried straight through the downward sweep -- one continuous motion,
+// release at the bottom to fire. The trigger stays free, so gesture mode
+// does not fight the currently readied weapon's own fire button. Known
+// tradeoff, stated rather than hidden: this means a gesture cannot itself be
+// "squeeze the trigger" shaped, since that button is reserved.
 class RSG_Matcher : EventHandler
 {
 	private Array<RSG_Template> templates;
@@ -175,7 +197,9 @@ class RSG_Matcher : EventHandler
 	private bool modeActive;
 	private int entryHeld;
 	private int idleTics;
-	private int rearmTics;
+	private bool drawing;
+	private int drawStartTic;
+	private bool wasGripMid;
 	private bool seeded;
 	private Array<double> dtwCost;
 
@@ -284,7 +308,13 @@ class RSG_Matcher : EventHandler
 	{
 		modeActive = true;
 		idleTics = 0;
-		rearmTics = 0;
+
+		// Entry is held on grip; carry that same hold straight into the first
+		// stroke rather than requiring a separate press once mode opens. One
+		// continuous motion: raise, hold, sweep, release.
+		drawing = true;
+		drawStartTic = level.maptime;
+		wasGripMid = true;
 
 		if (DebugOn())
 			Console.Printf("rsg: mode open");
@@ -294,6 +324,7 @@ class RSG_Matcher : EventHandler
 	{
 		modeActive = false;
 		entryHeld = 0;
+		drawing = false;
 
 		if (DebugOn())
 			Console.Printf("rsg: mode closed (%s)", reason);
@@ -372,20 +403,56 @@ class RSG_Matcher : EventHandler
 			return;
 		}
 
-		// After a match, sit out briefly: the matched stroke stays inside the
-		// window for another second and would otherwise fire every single tic.
-		if (rearmTics > 0)
+		bool grip = pawn.GripHeldMain;
+
+		if (drawing)
 		{
-			rearmTics--;
+			int span = level.maptime - drawStartTic;
+			int maxSpan = IntOf(cvWindow, 70);
+
+			// Release ends the stroke normally. Hitting the cap ends it too,
+			// without waiting for a release that may not be coming -- a stuck
+			// or forgotten grip must not hold the ring's own history hostage
+			// forever. Either way this is an EDGE, not a level: wasGripMid
+			// below stops the still-held cap case from restarting a stroke on
+			// its very next tic with no release in between.
+			if (!grip || span >= maxSpan)
+			{
+				CompleteStroke(min(span, maxSpan));
+				drawing = false;
+			}
+
+			wasGripMid = grip;
 			return;
 		}
 
-		let ring = cap.GetRing(RSG_Capture.HAND_MAIN);
-		let live = RSG_Normalizer.Build(ring, IntOf(cvWindow, 35));
-		if (live == null)
+		// Between strokes: press-and-hold grip again to draw another, same as
+		// entry did. Edge-triggered so a still-held grip from a capped stroke
+		// cannot immediately restart one.
+		if (grip && !wasGripMid)
+		{
+			drawing = true;
+			drawStartTic = level.maptime;
+		}
+		wasGripMid = grip;
+	}
+
+	private void CompleteStroke(int span)
+	{
+		let cap = RSG_Capture.Get();
+		if (cap == null || !playeringame[consoleplayer])
 			return;
 
-		if (live.Extent() < FloatOf(cvMinExtent, 8.0))
+		let pawn = players[consoleplayer].mo;
+		if (pawn == null)
+			return;
+
+		let ring = cap.GetRing(RSG_Capture.HAND_MAIN);
+		let stroke = RSG_Normalizer.Build(ring, span);
+		if (stroke == null)
+			return;
+
+		if (stroke.Extent() < FloatOf(cvMinExtent, 8.0))
 			return;
 
 		int bestIndex = -1;
@@ -406,7 +473,7 @@ class RSG_Matcher : EventHandler
 			if (!t.ContextValid(pawn))
 				continue;
 
-			double conf = Confidence(live, t);
+			double conf = Confidence(stroke, t);
 			double need = (t.minConfidence > 0) ? t.minConfidence : FloatOf(cvConfidence, 0.35);
 
 			if (conf >= need && conf > bestConfidence)
@@ -423,7 +490,6 @@ class RSG_Matcher : EventHandler
 	private void Fire(int index, double confidence)
 	{
 		let t = templates[index];
-		rearmTics = IntOf(cvWindow, 35);
 		idleTics = 0;
 
 		// %s takes a bare name directly -- no cast needed. scriptutil.zs:223

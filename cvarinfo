@@ -35,8 +35,12 @@ user int   rsg_entry_hold = 18;
 user int   rsg_idle_exit  = 350;
 
 // --------------------------------------------------------------- matching --
-// Tics of motion a single stroke is matched over.
-user int   rsg_window     = 35;
+// A stroke is button-delimited now (hold grip through the sweep, release to
+// match), not a sliding window -- this is a CAP on how long one hold may run,
+// not the length matching happens over. Exists so a stuck or forgotten grip
+// cannot hold the ring buffer's history hostage forever; an ordinary stroke
+// finishes on release long before hitting it.
+user int   rsg_window     = 70;
 
 // Average per-step deviation, in map units, at which confidence reaches zero.
 // Larger is more forgiving. This is the dial to turn when a gesture you are
