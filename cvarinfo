@@ -23,9 +23,13 @@ user bool  rsg_debug   = false;
 
 // ----------------------------------------------------------------- entry --
 // Gesture mode has to be entered deliberately, or every arm movement in a
-// firefight is a candidate gesture. Entry is the main hand raised above head
-// height with grip held -- distinct, and it needs no finger tracking, which
-// this engine does not have (only two capacitive touch bits, not curl).
+// firefight is a candidate gesture. Entry is the OFF hand raised above head
+// height -- no button, no grip. That is deliberate: the drawing (main) hand
+// never touches an input anything else in this mod family reads, so a
+// gesture cannot collide with grabbing, weapon fire, or a reload's own
+// button and motion reads. Distinct enough not to happen by accident, and it
+// needs no finger tracking, which this engine does not have (only two
+// capacitive touch bits, not curl).
 //
 // Tics the pose must be held. 35 tics = 1 second.
 user int   rsg_entry_hold = 18;
@@ -35,11 +39,11 @@ user int   rsg_entry_hold = 18;
 user int   rsg_idle_exit  = 350;
 
 // --------------------------------------------------------------- matching --
-// A stroke is button-delimited now (hold grip through the sweep, release to
-// match), not a sliding window -- this is a CAP on how long one hold may run,
-// not the length matching happens over. Exists so a stuck or forgotten grip
-// cannot hold the ring buffer's history hostage forever; an ordinary stroke
-// finishes on release long before hitting it.
+// A stroke is delimited by the off-hand pose (hold it through the sweep,
+// drop it to match), not a sliding window -- this is a CAP on how long one
+// hold may run, not the length matching happens over. Exists so an arm left
+// raised cannot hold the ring buffer's history hostage forever; an ordinary
+// stroke finishes on drop long before hitting it.
 user int   rsg_window     = 70;
 
 // Average per-step deviation, in map units, at which confidence reaches zero.

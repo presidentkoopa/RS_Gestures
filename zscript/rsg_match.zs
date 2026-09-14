@@ -167,28 +167,36 @@ class RSG_Template play
 	}
 }
 
-// Stroke segmentation: BUTTON-DELIMITED, not a sliding window.
+// Stroke segmentation: OFF-HAND POSE, not a button anywhere.
 //
-// The first cut of this matcher ran DTW every tic against the last
-// rsg_window tics of the ring buffer, gated by a rearm cooldown after each
-// fire and a minimum-extent floor to reject a hand holding still. Three
-// separate heuristics, all approximating one thing a sliding window cannot
-// know on its own: when did the gesture actually start and end.
+// Two earlier designs, both replaced for the same reason -- a real signal
+// beats a heuristic guessing one:
+//   v1 ran DTW every tic against a sliding window, gated by a rearm cooldown
+//      and a minimum-extent floor. Three heuristics approximating one thing
+//      a window cannot know on its own: when did the gesture start and end.
+//   v2 delimited the stroke on GripHeldMain -- hold to draw, release to
+//      match, per MageVR-Reborn's published design (README only, no source;
+//      vr-reference-study-unified.md Part 6). Real signal, but the wrong
+//      button: RS_WorldHands' grab claims that same press whenever the hand
+//      is near anything grabbable, entirely independent of gesture mode.
 //
-// MageVR-Reborn's published design (README only, no source -- see
-// vr-reference-study-unified.md Part 6) answers this directly: hold a button
-// to trace, release to end the stroke. That is a real signal, not an
-// approximation, and it deletes the rearm cooldown outright -- there is
-// nothing to re-arm when a stroke only ever gets matched once, exactly when
-// it completes.
+// v3 moves the signal to the OFF hand's POSE instead of any button on either
+// hand: hold the off hand above the head, and that alone means "gesture mode
+// is live" for as long as it is held -- entry and every stroke's start/stop
+// ride on the same continuous hold, the same way entry-into-first-stroke
+// already worked in v2. The drawing (main) hand never touches a button or
+// grip at all, so it cannot collide with grabbing, weapon fire, or a
+// reload's own button reads -- there is nothing left on that hand to
+// collide WITH. The off hand's own pose is deliberately the same "raised
+// above the head" shape the old main-hand entry used, not a new one to
+// invent and re-litigate.
 //
-// Reuses GripHeldMain rather than the trigger, deliberately: entry already
-// holds grip (raise the hand, hold grip, mode opens), so drawing is the same
-// grip carried straight through the downward sweep -- one continuous motion,
-// release at the bottom to fire. The trigger stays free, so gesture mode
-// does not fight the currently readied weapon's own fire button. Known
-// tradeoff, stated rather than hidden: this means a gesture cannot itself be
-// "squeeze the trigger" shaped, since that button is reserved.
+// Stated tradeoff, same as always: an off hand busy holding this pose cannot
+// also be doing anything else -- including a second, independent gesture,
+// if that is ever wanted. The alternative (infer start/stop from the main
+// hand's own motion, freeing both hands) was considered and set aside for
+// now: it trades a deliberate, explicit signal for one inferred from
+// velocity, which is the same species of guess v1 already proved fragile.
 class RSG_Matcher : EventHandler
 {
 	private Array<RSG_Template> templates;
@@ -199,7 +207,7 @@ class RSG_Matcher : EventHandler
 	private int idleTics;
 	private bool drawing;
 	private int drawStartTic;
-	private bool wasGripMid;
+	private bool wasPoseMid;
 	private bool seeded;
 	private Array<double> dtwCost;
 
@@ -309,12 +317,13 @@ class RSG_Matcher : EventHandler
 		modeActive = true;
 		idleTics = 0;
 
-		// Entry is held on grip; carry that same hold straight into the first
-		// stroke rather than requiring a separate press once mode opens. One
-		// continuous motion: raise, hold, sweep, release.
+		// Entry is held on the off-hand pose; carry that same hold straight into
+		// the first stroke rather than requiring a separate signal once mode
+		// opens. One continuous hold: raise the off hand, keep it there while
+		// the main hand sweeps, drop it when done.
 		drawing = true;
 		drawStartTic = level.maptime;
-		wasGripMid = true;
+		wasPoseMid = true;
 
 		if (DebugOn())
 			Console.Printf("rsg: mode open");
@@ -344,15 +353,14 @@ class RSG_Matcher : EventHandler
 			CloseMode("damaged");
 	}
 
-	// Entry pose: main hand raised above the head with grip held. Distinct
-	// enough not to happen by accident, and it needs no finger tracking --
-	// which this engine does not have.
-	private bool EntryPoseHeld(PlayerPawn pawn)
+	// The one signal for everything: off hand raised above the head. No
+	// button, no grip -- so the drawing (main) hand is never touching an
+	// input that anything else in this mod family could also be reading.
+	// Distinct enough not to happen by accident, and it needs no finger
+	// tracking, which this engine does not have.
+	private bool OffHandDrawPose(PlayerPawn pawn)
 	{
-		if (!pawn.GripHeldMain)
-			return false;
-
-		return pawn.AttackPos.z > pawn.HmdPos.z;
+		return pawn.OffhandPos.z > pawn.HmdPos.z;
 	}
 
 	// --------------------------------------------------------------- tick --
@@ -379,7 +387,7 @@ class RSG_Matcher : EventHandler
 
 		if (!modeActive)
 		{
-			if (EntryPoseHeld(pawn))
+			if (OffHandDrawPose(pawn))
 			{
 				entryHeld++;
 				if (entryHeld >= IntOf(cvEntryHold, 18))
@@ -403,38 +411,38 @@ class RSG_Matcher : EventHandler
 			return;
 		}
 
-		bool grip = pawn.GripHeldMain;
+		bool pose = OffHandDrawPose(pawn);
 
 		if (drawing)
 		{
 			int span = level.maptime - drawStartTic;
 			int maxSpan = IntOf(cvWindow, 70);
 
-			// Release ends the stroke normally. Hitting the cap ends it too,
-			// without waiting for a release that may not be coming -- a stuck
-			// or forgotten grip must not hold the ring's own history hostage
-			// forever. Either way this is an EDGE, not a level: wasGripMid
+			// Dropping the pose ends the stroke normally. Hitting the cap ends
+			// it too, without waiting for a drop that may not be coming -- an
+			// arm left raised must not hold the ring's own history hostage
+			// forever. Either way this is an EDGE, not a level: wasPoseMid
 			// below stops the still-held cap case from restarting a stroke on
-			// its very next tic with no release in between.
-			if (!grip || span >= maxSpan)
+			// its very next tic with no drop in between.
+			if (!pose || span >= maxSpan)
 			{
 				CompleteStroke(min(span, maxSpan));
 				drawing = false;
 			}
 
-			wasGripMid = grip;
+			wasPoseMid = pose;
 			return;
 		}
 
-		// Between strokes: press-and-hold grip again to draw another, same as
-		// entry did. Edge-triggered so a still-held grip from a capped stroke
-		// cannot immediately restart one.
-		if (grip && !wasGripMid)
+		// Between strokes: raise the off hand again to draw another, same as
+		// entry did. Edge-triggered so a still-raised hand from a capped
+		// stroke cannot immediately restart one.
+		if (pose && !wasPoseMid)
 		{
 			drawing = true;
 			drawStartTic = level.maptime;
 		}
-		wasGripMid = grip;
+		wasPoseMid = pose;
 	}
 
 	private void CompleteStroke(int span)
