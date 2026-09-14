@@ -59,3 +59,13 @@ user float rsg_confidence = 0.35;
 // holding still, not a gesture. Without a floor here a motionless hand draws a
 // tiny tight path that will cheerfully match anything.
 user float rsg_min_extent = 8.0;
+
+// -------------------------------------------------------------- recorded --
+// One recorded gesture per slot, written by the Record menu -- never by hand.
+// "v1|tolerance|x,y,z|..." is 32 body-relative points of the most typical take.
+// Empty means unused. Anything that fails to parse is ignored whole rather
+// than loaded half-broken, since a half-broken stroke would still match.
+user string rsg_custom_1 = "";
+user string rsg_custom_2 = "";
+user string rsg_custom_3 = "";
+user string rsg_custom_4 = "";

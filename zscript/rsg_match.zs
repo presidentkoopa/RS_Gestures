@@ -237,6 +237,8 @@ class RSG_Matcher : EventHandler
 	private bool wasPoseMid;
 	private bool seeded;
 	private Array<double> dtwCost;
+	private RSG_Recorder recorder;
+	private bool customsLoaded;
 
 	private CVar cvDebug, cvEntryHold, cvIdleExit, cvWindow;
 	private CVar cvTolerance, cvConfidence, cvMinExtent;
@@ -376,6 +378,7 @@ class RSG_Matcher : EventHandler
 
 	override void OnRegister()
 	{
+		recorder = RSG_Recorder(new("RSG_Recorder"));
 		SeedDemoTemplates();
 	}
 
@@ -437,6 +440,12 @@ class RSG_Matcher : EventHandler
 	override void WorldTick()
 	{
 		CacheCVars();
+
+		// Before the capture check, on purpose: recorded gestures should
+		// already be registered the moment gestures are switched on, not
+		// only after they have been on for a tic.
+		if (!customsLoaded && playeringame[consoleplayer])
+			LoadCustomTemplates();
 
 		let cap = RSG_Capture.Get();
 		if (cap == null || !cap.IsCapturing())
@@ -529,8 +538,28 @@ class RSG_Matcher : EventHandler
 		if (stroke == null)
 			return;
 
+		bool recording = recorder != null && recorder.IsRecording();
+
 		if (stroke.Extent() < FloatOf(cvMinExtent, 8.0))
+		{
+			// Silent while matching -- a hand holding still is not a failed
+			// gesture. Said aloud while recording, because there the player is
+			// deliberately performing and a take that vanishes with no reason
+			// looks exactly like the recorder being broken.
+			if (recording)
+				Say("rsg: take too small to count -- draw it bigger");
+
 			return;
+		}
+
+		// A take is recorded INSTEAD of matched, not as well: matching a shape
+		// against the library while you are still teaching it one would fire
+		// whatever it happens to resemble on every single take.
+		if (recording)
+		{
+			RecordTake(stroke);
+			return;
+		}
 
 		int bestIndex = -1;
 		double bestConfidence = 0;
@@ -617,6 +646,256 @@ class RSG_Matcher : EventHandler
 				SendNetworkEvent("rsg_sequence_matched", i, 0, 0);
 			}
 		}
+	}
+
+	// ----------------------------------------------------------- recording --
+
+	// Not gated on rsg_debug, unlike every other print in this file: during
+	// a recording the player is waiting on these lines to know what to do.
+	private void Say(String msg)
+	{
+		Console.Printf("%s", msg);
+	}
+
+	override void NetworkProcess(ConsoleEvent e)
+	{
+		if (e.Player != consoleplayer || recorder == null)
+			return;
+
+		if (e.Name == "rsg_rec_start")
+		{
+			int startSlot = e.Args[0];
+			if (startSlot < 1 || startSlot > RSG_Recorder.SLOT_COUNT)
+				return;
+
+			recorder.Start(startSlot);
+			Say(String.Format("rsg: recording slot %d -- raise your off hand, draw the shape, drop it. %d times or more.",
+				startSlot, RSG_Recorder.MIN_TAKES));
+
+			let cap = RSG_Capture.Get();
+			if (cap == null || !cap.IsCapturing())
+				Say("rsg: gestures are switched off -- enable them first or nothing will record");
+		}
+		else if (e.Name == "rsg_rec_save")
+		{
+			SaveRecording();
+		}
+		else if (e.Name == "rsg_rec_cancel")
+		{
+			if (recorder.IsRecording())
+				Say("rsg: recording cancelled, nothing saved");
+
+			recorder.Stop();
+		}
+		else if (e.Name == "rsg_rec_clear")
+		{
+			ClearSlot(e.Args[0]);
+		}
+	}
+
+	// Once, the first tic a player exists -- a cvar fetched before then comes
+	// back null, the same reason CacheCVars is lazy.
+	private void LoadCustomTemplates()
+	{
+		customsLoaded = true;
+
+		for (int loadSlot = 1; loadSlot <= RSG_Recorder.SLOT_COUNT; ++loadSlot)
+		{
+			let cv = CVar.GetCVar(RSG_Recorder.CVarName(loadSlot), players[consoleplayer]);
+			if (cv == null)
+				continue;
+
+			let loaded = RSG_Recorder.Deserialize(cv.GetString(), RSG_Recorder.SlotId(loadSlot));
+			if (loaded != null)
+				RegisterOrReplace(loaded);
+		}
+	}
+
+	// In place, so a slot re-recorded mid-session keeps its index: a listener
+	// mapping rsg_matched's index through GetTemplateId never sees the registry
+	// shift underneath it.
+	private void RegisterOrReplace(RSG_Template tmpl)
+	{
+		for (int ri = 0; ri < templates.Size(); ++ri)
+		{
+			if (templates[ri] != null && templates[ri].id == tmpl.id)
+			{
+				templates[ri] = tmpl;
+				return;
+			}
+		}
+
+		templates.Push(tmpl);
+	}
+
+	private void RecordTake(RSG_Stroke stroke)
+	{
+		int count = recorder.AddTake(stroke);
+		if (count < 0)
+		{
+			Say(String.Format("rsg: %d takes is the most one recording keeps -- save it or cancel",
+				RSG_Recorder.MAX_TAKES));
+			return;
+		}
+
+		// Felt, not just printed: the text is easy to miss mid-motion, and a
+		// buzz in the drawing hand is unmistakably "that one counted."
+		level.VRHaptic(RSG_Capture.HAND_MAIN, 0.4, 40.0);
+
+		if (count < RSG_Recorder.MIN_TAKES)
+			Say(String.Format("rsg: take %d recorded -- %d more needed", count, RSG_Recorder.MIN_TAKES - count));
+		else
+			Say(String.Format("rsg: take %d recorded -- save now, or keep going for a steadier gesture", count));
+	}
+
+	// THE TEMPLATE IS THE MEDOID TAKE, NOT AN AVERAGE.
+	//
+	// The medoid is the take with the least total DTW distance to all the
+	// others. A point-by-point average looks like the obvious choice and is
+	// wrong here: takes are resampled by TIME, so point 12 of a slow take and
+	// point 12 of a fast one can be different parts of the shape, and averaging
+	// them smears it into something nobody drew. The medoid is a shape the
+	// player actually performed.
+	//
+	// Tolerance comes from how far the other takes sat from it. A steady
+	// performer gets a tight gesture, a loose one a forgiving gesture, and
+	// neither touches a slider. The farthest counted take is set to land just
+	// inside the confidence gate, plus a quarter as margin.
+	private void SaveRecording()
+	{
+		if (!recorder.IsRecording())
+		{
+			Say("rsg: nothing is being recorded");
+			return;
+		}
+
+		int n = recorder.TakeCount();
+		if (n < RSG_Recorder.MIN_TAKES)
+		{
+			Say(String.Format("rsg: need %d takes to save, have %d", RSG_Recorder.MIN_TAKES, n));
+			return;
+		}
+
+		// DTW is symmetric, so each pair is measured once and mirrored.
+		Array<double> dist;
+		dist.Resize(n * n);
+		for (int a = 0; a < n; ++a)
+		{
+			dist[a * n + a] = 0;
+			for (int b = a + 1; b < n; ++b)
+			{
+				double pairCost = DTW(recorder.TakeAt(a), recorder.TakeAt(b));
+				dist[a * n + b] = pairCost;
+				dist[b * n + a] = pairCost;
+			}
+		}
+
+		int medoid = 0;
+		double medoidSum = -1;
+		for (int m = 0; m < n; ++m)
+		{
+			double rowSum = 0;
+			for (int k = 0; k < n; ++k)
+				rowSum += dist[m * n + k];
+
+			if (medoidSum < 0 || rowSum < medoidSum)
+			{
+				medoidSum = rowSum;
+				medoid = m;
+			}
+		}
+
+		// One fumbled take must not loosen the whole gesture. With three or
+		// more other takes to compare against, the single farthest is left out
+		// of the tolerance if it sits beyond twice the average of the rest.
+		double worst = 0;
+		int worstIndex = -1;
+		double total = 0;
+		for (int w = 0; w < n; ++w)
+		{
+			if (w == medoid)
+				continue;
+
+			double toMedoid = dist[medoid * n + w];
+			total += toMedoid;
+			if (toMedoid > worst)
+			{
+				worst = toMedoid;
+				worstIndex = w;
+			}
+		}
+
+		double spread = worst;
+		bool dropped = false;
+		int others = n - 1;
+		if (others >= 3)
+		{
+			double restAverage = (total - worst) / double(others - 1);
+			if (worst > 2.0 * restAverage)
+			{
+				spread = 0;
+				for (int r = 0; r < n; ++r)
+				{
+					if (r == medoid || r == worstIndex)
+						continue;
+
+					double kept = dist[medoid * n + r];
+					if (kept > spread)
+						spread = kept;
+				}
+				dropped = true;
+			}
+		}
+
+		// Capped at 0.9: a gate of 1.0 would demand infinite tolerance.
+		double gate = FloatOf(cvConfidence, 0.35);
+		if (gate > 0.9)
+			gate = 0.9;
+
+		double tol = spread / (1.0 - gate) * 1.25;
+		if (tol < 4.0)
+			tol = 4.0;
+		if (tol > 60.0)
+			tol = 60.0;
+
+		let chosen = recorder.TakeAt(medoid);
+		int saveSlot = recorder.ActiveSlot();
+		name slotName = RSG_Recorder.SlotId(saveSlot);
+
+		let cv = CVar.GetCVar(RSG_Recorder.CVarName(saveSlot), players[consoleplayer]);
+		if (cv != null)
+			cv.SetString(RSG_Recorder.Serialize(chosen, tol));
+		else
+			Say("rsg: slot cvar missing -- kept for this session only, it will not survive a restart");
+
+		RegisterOrReplace(RSG_Template.Create(slotName, "default", chosen, tol, 0));
+
+		level.VRHaptic(RSG_Capture.HAND_MAIN, 1.0, 150.0);
+		Say(String.Format("rsg: saved '%s' from %d takes -- tolerance %.1f, takes varied up to %.1f%s",
+			slotName, n, tol, spread, dropped ? " (one outlier take ignored)" : ""));
+
+		recorder.Stop();
+	}
+
+	private void ClearSlot(int clearSlot)
+	{
+		if (clearSlot < 1 || clearSlot > RSG_Recorder.SLOT_COUNT)
+			return;
+
+		let cv = CVar.GetCVar(RSG_Recorder.CVarName(clearSlot), players[consoleplayer]);
+		if (cv != null)
+			cv.SetString("");
+
+		// The stroke is nulled rather than the entry deleted: deleting shifts
+		// every later index, and CompleteStroke already skips a null stroke.
+		name slotName = RSG_Recorder.SlotId(clearSlot);
+		for (int ci = 0; ci < templates.Size(); ++ci)
+		{
+			if (templates[ci] != null && templates[ci].id == slotName)
+				templates[ci].stroke = null;
+		}
+
+		Say(String.Format("rsg: slot %d cleared", clearSlot));
 	}
 
 	// -------------------------------------------------------------- match --
