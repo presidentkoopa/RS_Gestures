@@ -167,6 +167,30 @@ class RSG_Template play
 	}
 }
 
+// A named chain of already-registered templates' ids, matched in order
+// within a bounded time window between consecutive steps.
+//
+// Deliberately a SIDE OBSERVATION on top of ordinary matching, not a
+// replacement path: each step keeps firing its own rsg_matched exactly as it
+// does standing alone, so a template already bound to its own action (the
+// grenade-summon demo, say) keeps working by itself AND can also be one link
+// of a chain. The chain only adds a second, separate event when the whole
+// thing completes -- nothing about single-gesture use has to change to
+// support sequences existing.
+//
+// Built by pushing onto stepIds directly rather than through a constructor
+// taking an array parameter -- ZScript's array-parameter semantics across a
+// call boundary are exactly the kind of thing this codebase has been burned
+// by guessing about before (`out Vector3` crashing the JIT is the standing
+// example), so this sidesteps needing to trust one this file has not proven.
+class RSG_Sequence play
+{
+	name id;
+	name book;
+	Array<name> stepIds;
+	int maxInterStepTics;
+}
+
 // Stroke segmentation: OFF-HAND POSE, not a button anywhere.
 //
 // Two earlier designs, both replaced for the same reason -- a real signal
@@ -200,6 +224,9 @@ class RSG_Template play
 class RSG_Matcher : EventHandler
 {
 	private Array<RSG_Template> templates;
+	private Array<RSG_Sequence> sequences;
+	private Array<int> seqProgress;     // parallel to sequences
+	private Array<int> seqLastStepTic;  // parallel to sequences
 	private name activeBook;
 
 	private bool modeActive;
@@ -225,6 +252,16 @@ class RSG_Matcher : EventHandler
 			templates.Push(t);
 	}
 
+	void RegisterSequence(RSG_Sequence s)
+	{
+		if (s == null || s.stepIds.Size() == 0)
+			return;
+
+		sequences.Push(s);
+		seqProgress.Push(0);
+		seqLastStepTic.Push(0);
+	}
+
 	void SetBook(name bookName)
 	{
 		activeBook = bookName;
@@ -244,6 +281,15 @@ class RSG_Matcher : EventHandler
 			return 'none';
 
 		return templates[index].id;
+	}
+
+	// Same idea for a listener on rsg_sequence_matched.
+	name GetSequenceId(int index)
+	{
+		if (index < 0 || index >= sequences.Size() || sequences[index] == null)
+			return 'none';
+
+		return sequences[index].id;
 	}
 
 	// ------------------------------------------------------------- cvars --
@@ -281,9 +327,15 @@ class RSG_Matcher : EventHandler
 
 	// ---------------------------------------------------------- templates --
 
-	// Built-in demo gesture: a downward stroke in front of the body. It exists
-	// so there is something to perform and watch fire before any recording tool
-	// does; a real library replaces it.
+	// Built-in demo gestures: a downward stroke and its mirror, in front of
+	// the body. They exist so there is something to perform and watch fire
+	// before any recording tool does; a real library replaces them.
+	//
+	// The pair is deliberate, not padding: DTW scores the path in time order,
+	// so a stroke and its exact reverse are two genuinely different shapes to
+	// match against, not the same one performed twice -- which is what makes
+	// them useful as the two links of the demo sequence below, rather than a
+	// chain that would trivially complete on any single stroke either way.
 	private void SeedDemoTemplates()
 	{
 		if (seeded)
@@ -291,18 +343,35 @@ class RSG_Matcher : EventHandler
 
 		seeded = true;
 
-		let path = RSG_Stroke(new("RSG_Stroke"));
-		path.Init();
+		let down = RSG_Stroke(new("RSG_Stroke"));
+		down.Init();
+		let up = RSG_Stroke(new("RSG_Stroke"));
+		up.Init();
 
 		for (int i = 0; i < RSG_Stroke.STEPS; ++i)
 		{
 			double t = double(i) / double(RSG_Stroke.STEPS - 1);
 			// In front of the head, sweeping from above eye level to waist.
-			path.SetPoint(i, (18.0, 0.0, 16.0 - 56.0 * t));
+			down.SetPoint(i, (18.0, 0.0, 16.0 - 56.0 * t));
+			// The same two points, travelled the other way.
+			up.SetPoint(i, (18.0, 0.0, -40.0 + 56.0 * t));
 		}
 
-		RegisterTemplate(RSG_Template.Create("downstroke", "default", path, 0, 0));
+		RegisterTemplate(RSG_Template.Create("downstroke", "default", down, 0, 0));
+		RegisterTemplate(RSG_Template.Create("upstroke", "default", up, 0, 0));
 		activeBook = "default";
+
+		// Demo sequence: downstroke then upstroke, within 2 seconds of each
+		// other. Nothing listens for rsg_sequence_matched yet -- proving the
+		// chain-tracking fires at all is the point, same as downstroke alone
+		// proved single-template matching before any demo action existed.
+		let seq = RSG_Sequence(new("RSG_Sequence"));
+		seq.id = "down_up";
+		seq.book = "default";
+		seq.stepIds.Push("downstroke");
+		seq.stepIds.Push("upstroke");
+		seq.maxInterStepTics = 70;
+		RegisterSequence(seq);
 	}
 
 	override void OnRegister()
@@ -510,6 +579,44 @@ class RSG_Matcher : EventHandler
 		// Index rather than name: network events carry ints only. A listener
 		// maps the index back through the registry it registered into.
 		SendNetworkEvent("rsg_matched", index, int(confidence * 100), 0);
+
+		AdvanceSequences(t.id);
+	}
+
+	// One matched template can be the next link of several sequences, or of
+	// none -- checked against every registered chain, not just one.
+	private void AdvanceSequences(name matchedId)
+	{
+		for (int i = 0; i < sequences.Size(); ++i)
+		{
+			let seq = sequences[i];
+			if (seq == null || seq.book != activeBook)
+				continue;
+
+			// Stale progress expires rather than carrying forever -- a chain
+			// half-drawn a minute ago must not silently complete just because
+			// the right shape happens to come around again later.
+			if (seqProgress[i] > 0 && (level.maptime - seqLastStepTic[i]) > seq.maxInterStepTics)
+				seqProgress[i] = 0;
+
+			if (matchedId != seq.stepIds[seqProgress[i]])
+				continue;
+
+			seqProgress[i]++;
+			seqLastStepTic[i] = level.maptime;
+
+			if (seqProgress[i] >= seq.stepIds.Size())
+			{
+				seqProgress[i] = 0;
+
+				if (DebugOn())
+					Console.Printf("rsg: sequence '%s' completed", seq.id);
+
+				// Same shape as rsg_matched: index only, a listener maps it
+				// back through GetSequenceId.
+				SendNetworkEvent("rsg_sequence_matched", i, 0, 0);
+			}
+		}
 	}
 
 	// -------------------------------------------------------------- match --
