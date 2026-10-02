@@ -259,7 +259,13 @@ class RSG_Capture : EventHandler
 			return;
 
 		int btn = players[consoleplayer].cmd.buttons;
-		int tic = level.maptime;
+		// REAL tics, not map tics. WorldTick runs once per engine tic whatever
+		// the world clock is doing (src/events.h: "WorldTick keeps real time"),
+		// so this ring gains exactly one sample per real tic. Stamping those
+		// samples with maptime made the stamp disagree with the ring's own
+		// spacing the moment slow motion was running, and stop advancing at all
+		// with the world frozen.
+		int tic = level.realtime;
 
 		// MainHandRoll, not AttackRoll: AttackRoll is force-zeroed every tic to
 		// stay deterministic across peers (there is no weaponroll in the wire

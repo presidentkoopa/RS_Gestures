@@ -327,6 +327,28 @@ class RSG_Matcher : EventHandler
 		return (c != null) ? c.GetFloat() : fallback;
 	}
 
+	// ----------------------------------------------------------- feedback --
+
+	// WHY THIS EXISTS: gesture mode used to say nothing at all unless rsg_debug
+	// was on -- opening, closing, matching and failing to match were four silent
+	// events. The first confirmation a player got was whatever action the
+	// gesture was bound to, which arrives long after the window in which the
+	// shape had to be drawn, so there was no way to learn where that window
+	// starts. A cue on each edge is what makes it learnable, and the haptic is
+	// the half of it that lands while the hand is still moving.
+	//
+	// Stock menu/* sounds rather than authored ones: RS_Gestures ships no audio,
+	// and every supported game defines these aliases, so a cue cannot fall
+	// silent on an IWAD this was never tested against. CHANF_UI keeps them out
+	// of savegames. No CHANF_RUMBLE: rumble-from-sound is opt-in, and the
+	// per-hand VRHaptic calls below are the targeted version of it. The whole
+	// path is already consoleplayer-local, so no peer hears another player's
+	// gesture mode.
+	private void PlayCue(Sound which, double vol)
+	{
+		S_StartSound(which, CHAN_VOICE, CHANF_UI, vol);
+	}
+
 	// ---------------------------------------------------------- templates --
 
 	// Built-in demo gestures: a downward stroke and its mirror, in front of
@@ -394,8 +416,14 @@ class RSG_Matcher : EventHandler
 		// opens. One continuous hold: raise the off hand, keep it there while
 		// the main hand sweeps, drop it when done.
 		drawing = true;
-		drawStartTic = level.maptime;
+		drawStartTic = level.realtime;
 		wasPoseMid = true;
+
+		// On the OFF hand, the one holding the entry pose: a cue belongs on the
+		// hand that caused it. The drawing hand is deliberately left clear so a
+		// buzz there can only ever mean the shape was read.
+		level.VRHaptic(RSG_Capture.HAND_OFF, 0.45, 60.0);
+		PlayCue("menu/activate", 0.5);
 
 		if (DebugOn())
 			Console.Printf("rsg: mode open");
@@ -406,6 +434,13 @@ class RSG_Matcher : EventHandler
 		modeActive = false;
 		entryHeld = 0;
 		drawing = false;
+
+		// Mode can end with the player doing nothing deliberate -- the idle
+		// timeout, or a hit taken mid-draw -- so this is the only thing that
+		// tells them the next sweep will not be read. Weaker than the open cue:
+		// it is news, not an invitation.
+		level.VRHaptic(RSG_Capture.HAND_OFF, 0.3, 45.0);
+		PlayCue("menu/clear", 0.45);
 
 		if (DebugOn())
 			Console.Printf("rsg: mode closed (%s)", reason);
@@ -493,7 +528,14 @@ class RSG_Matcher : EventHandler
 
 		if (drawing)
 		{
-			int span = level.maptime - drawStartTic;
+			// Real tics at both ends: drawStartTic is a real tic and the capture
+			// ring holds one sample per real tic, so this span is directly a
+			// COUNT OF SAMPLES, which is what RSG_Normalizer.Build indexes by.
+			// Taken off maptime it shrank with the world in slow motion -- every
+			// stroke resampled from a window shorter than the motion -- and sat
+			// at zero with the world frozen, where span < 2 makes Build return
+			// null and nothing can ever match.
+			int span = level.realtime - drawStartTic;
 			int maxSpan = IntOf(cvWindow, 70);
 
 			// Dropping the pose ends the stroke normally. Hitting the cap ends
@@ -518,7 +560,7 @@ class RSG_Matcher : EventHandler
 		if (pose && !wasPoseMid)
 		{
 			drawing = true;
-			drawStartTic = level.maptime;
+			drawStartTic = level.realtime;
 		}
 		wasPoseMid = pose;
 	}
@@ -590,7 +632,20 @@ class RSG_Matcher : EventHandler
 		}
 
 		if (bestIndex >= 0)
+		{
 			Fire(bestIndex, bestConfidence);
+		}
+		else
+		{
+			// A stroke that cleared the extent floor and matched nothing was a
+			// real attempt at something, so it gets a dud tick: "that was not a
+			// gesture I know" and "the mod never saw you" stop feeling the same.
+			// Shorter and weaker than the match buzz by design -- it must never
+			// be mistakable for success. The two earlier returns in this function
+			// keep it off a hand holding still and off recording takes.
+			level.VRHaptic(RSG_Capture.HAND_MAIN, 0.25, 25.0);
+			PlayCue("menu/invalid", 0.45);
+		}
 	}
 
 	private void Fire(int index, double confidence)
@@ -604,6 +659,13 @@ class RSG_Matcher : EventHandler
 		// was a real bug (call to unknown function 'String'), not a fix.
 		if (DebugOn())
 			Console.Printf("rsg: matched '%s' (%.2f)", t.id, confidence);
+
+		// Scaled by confidence: a shape that only just cleared the gate should
+		// not feel the same as a clean one, so a lucky match is distinguishable
+		// from a solid one without reading the console. Confidence() already
+		// clamps its result to 0..1, and VR_ScriptHaptic clamps again.
+		level.VRHaptic(RSG_Capture.HAND_MAIN, 0.45 + 0.55 * confidence, 90.0);
+		PlayCue("menu/change", 0.7);
 
 		// Index rather than name: network events carry ints only. A listener
 		// maps the index back through the registry it registered into.
@@ -625,14 +687,14 @@ class RSG_Matcher : EventHandler
 			// Stale progress expires rather than carrying forever -- a chain
 			// half-drawn a minute ago must not silently complete just because
 			// the right shape happens to come around again later.
-			if (seqProgress[i] > 0 && (level.maptime - seqLastStepTic[i]) > seq.maxInterStepTics)
+			if (seqProgress[i] > 0 && (level.realtime - seqLastStepTic[i]) > seq.maxInterStepTics)
 				seqProgress[i] = 0;
 
 			if (matchedId != seq.stepIds[seqProgress[i]])
 				continue;
 
 			seqProgress[i]++;
-			seqLastStepTic[i] = level.maptime;
+			seqLastStepTic[i] = level.realtime;
 
 			if (seqProgress[i] >= seq.stepIds.Size())
 			{
@@ -685,7 +747,7 @@ class RSG_Matcher : EventHandler
 			if (recorder.IsRecording())
 				Say("rsg: recording cancelled, nothing saved");
 
-			recorder.Stop();
+			recorder.StopRecording();
 		}
 		else if (e.Name == "rsg_rec_clear")
 		{
@@ -874,7 +936,7 @@ class RSG_Matcher : EventHandler
 		Say(String.Format("rsg: saved '%s' from %d takes -- tolerance %.1f, takes varied up to %.1f%s",
 			slotName, n, tol, spread, dropped ? " (one outlier take ignored)" : ""));
 
-		recorder.Stop();
+		recorder.StopRecording();
 	}
 
 	private void ClearSlot(int clearSlot)

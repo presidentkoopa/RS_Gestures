@@ -56,7 +56,14 @@ class RSG_Recorder play
 		takes.Resize(0);
 	}
 
-	void Stop()
+	// RENAMED FROM Stop(), 2026-10-02. `stop` is a reserved ZScript keyword -- it is a
+	// state label -- so a method of that name is a PARSE error, and this package therefore
+	// never compiled at all. Nothing here was wrong apart from the name.
+	//
+	// Same shape as the engine's Thinker.Wake() collision: when a mod method name clashes
+	// with something the language or the engine owns, the mod renames. Never try to make
+	// the keyword work.
+	void StopRecording()
 	{
 		recSlot = 0;
 		takes.Resize(0);
