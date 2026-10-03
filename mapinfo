@@ -2,8 +2,11 @@
 //
 // Capture and matching are separate handlers on purpose: the capture ring is
 // useful to anything wanting recent hand motion, and a second consumer should
-// not have to drag the matcher in with it.
+// not have to drag the matcher in with it. RSG_Signals (one hand's pose and
+// impulse) and RSG_TwoHand (both hands at once) are separate from both for the
+// same reason, and each is behind its own cvar -- a handler nobody has switched
+// on costs one early return per tic.
 GameInfo
 {
-	AddEventHandlers = "RSG_Capture", "RSG_Signals", "RSG_Matcher", "RSG_DemoActions"
+	AddEventHandlers = "RSG_Capture", "RSG_Signals", "RSG_TwoHand", "RSG_Matcher", "RSG_DemoActions"
 }

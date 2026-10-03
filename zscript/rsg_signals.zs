@@ -119,6 +119,37 @@ class RSG_Signals : EventHandler
 		cvStill   = CVar.FindCVar("rsg_still_mps");
 	}
 
+	// ---- THE CONVERSION, IN ONE PLACE -------------------------------------
+	//
+	// MAP UNITS TO METRES. The horizontals are metres times
+	// vr_vunits_per_meter; the vertical is that and then DIVIDED by
+	// level.pixelstretch (src/common/rendering/vulkan/stereo3d/
+	// vk_openxrdevice.cpp, GetRawHmdHeightInMapUnit), so going the other way
+	// means MULTIPLYING Z by the stretch before dividing everything by the
+	// scale. Getting that backwards is a 17% error on the vertical only --
+	// which reads in a headset as a gesture that works sideways and not
+	// upward, and does not read as a units bug at all.
+	//
+	// STATIC AND PUBLIC because it is no longer only this file's: RSG_TwoHand
+	// measures hip height and chest distance through it. Two copies of these
+	// four lines in one mod folder is exactly what this file's header says it
+	// exists to prevent.
+	static double UnitsPerMeter()
+	{
+		let c = CVar.GetCVar("vr_vunits_per_meter", null);
+		double u = c ? c.GetFloat() : 34.0;
+		// 34 is the engine's own default (hw_vrmodes.cpp). A nonsense value
+		// here would scale every threshold in the family, so it is floored
+		// rather than trusted.
+		return (u > 1.0) ? u : 34.0;
+	}
+
+	static Vector3 Metric(Vector3 mapVec)
+	{
+		double ps = (level.pixelstretch > 0.1) ? level.pixelstretch : 1.2;
+		return (mapVec.x, mapVec.y, mapVec.z * ps) / UnitsPerMeter();
+	}
+
 	// ---- POSES ------------------------------------------------------------
 	//
 	// AN OPEN PALM, and it is three separate controls because there are three
@@ -182,26 +213,23 @@ class RSG_Signals : EventHandler
 	// back toward him, which is a usable signal in its own right.
 	//
 	// THE CONVERSION IS THE POINT OF THIS FUNCTION. Both the velocity and the
-	// axis are moved into metric space -- the vertical scaled by
-	// level.pixelstretch, everything divided by vr_vunits_per_meter -- and the
-	// axis is re-normalised THERE, in the space the dot product happens in.
-	// Normalising in map space and then dotting in metric space is a subtler
-	// version of the same error and gives an axis that is not unit.
+	// axis are moved into metric space by Metric() above, and the axis is
+	// re-normalised THERE, in the space the dot product happens in. Normalising
+	// in map space and then dotting in metric space is a subtler version of the
+	// same error and gives an axis that is not unit.
+	//
+	// THE AXIS GOES THROUGH THE SAME CALL even though a direction has no units:
+	// dividing a direction by the scale is undone by the Unit() on the next
+	// line, so one helper serves both and there is no second formula to keep in
+	// step with the first.
 	static double ThrustAlongHand(Actor pawn, int hand)
 	{
 		if (!pawn) return 0.0;
-		Vector3 vel = level.HandVelAtPoint(hand, (0, 0, 0), RS_HAND_PEAK);
-		Vector3 axis = HandForward(pawn, hand);
-
-		double stretch = level.pixelstretch;
-		double upm = 32.0;
-		let c = CVar.GetCVar("vr_vunits_per_meter", null);
-		if (c) upm = max(c.GetFloat(), 0.0001);
-
-		Vector3 mvel  = (vel.x, vel.y, vel.z * stretch) / upm;
-		Vector3 maxis = (axis.x, axis.y, axis.z * stretch);
+		Vector3 mvel  = Metric(level.HandVelAtPoint(hand, (0, 0, 0), RS_HAND_PEAK));
+		Vector3 maxis = Metric(HandForward(pawn, hand));
 		if (maxis.Length() < 0.0001) return 0.0;
-		return mvel dot maxis.Unit();
+		Vector3 unitAxis = maxis.Unit();
+		return mvel dot unitAxis;
 	}
 
 	// THE SAME BASIS EVERY HAND-AIMED THING IN THIS FAMILY USES. The +90 on yaw
@@ -263,20 +291,28 @@ class RSG_Signals : EventHandler
 			// hand that twitched 200 ms ago has not been still, and the peak is
 			// the only reading that remembers that.
 			double along = ThrustAlongHand(pawn, hand);
-			Vector3 vel = level.HandVelAtPoint(hand, (0, 0, 0), RS_HAND_PEAK);
-			double upm = 32.0;
-			let c = CVar.GetCVar("vr_vunits_per_meter", null);
-			if (c) upm = max(c.GetFloat(), 0.0001);
-			double speed = ((vel.x, vel.y, vel.z * level.pixelstretch) / upm).Length();
+			Vector3 mvel = Metric(level.HandVelAtPoint(hand, (0, 0, 0), RS_HAND_PEAK));
+			double speed = mvel.Length();
 			if (speed < stillMps) stillFor[hand]++;
 			else stillFor[hand] = 0;
 
-			if (level.maptime - lastImpulse[hand] < repeat) continue;
+			// REAL TICS, NOT MAP TICS. This is an anti-double-fire on a HAND,
+			// and a hand keeps its own pace whatever the world clock is doing
+			// -- which is the entire point of slow motion in VR. Counted in
+			// maptime, a 12-tic gate became 60 real tics at a fifth speed and
+			// never lifted at all at a full freeze, so a thrust in slow motion
+			// announced once and then stopped working with nothing in the log.
+			// The engine's own note says it (g_levellocals.h, above realtime):
+			// time a PLAYER action by the real clock. Identical to maptime
+			// whenever nothing is slowed, so the cvar still reads in tics.
+			if (level.realtime - lastImpulse[hand] < repeat) continue;
 			if (ageCap > 0 && level.HandPeakAgeMs(hand) > ageCap) continue;
 			if (along < needMps) continue;
 
-			lastImpulse[hand] = level.maptime;
-			Fire(hand, along);
+			// AND THE LOCKOUT IS ARMED BY THE SEND, not ahead of it: Fire()
+			// answers whether the event was actually written.
+			if (Fire(hand, along))
+				lastImpulse[hand] = level.realtime;
 		}
 	}
 
@@ -296,11 +332,17 @@ class RSG_Signals : EventHandler
 	// fast along its own axis. It does not say a power fired, and it carries no
 	// claim about netplay: it was measured from local hardware, so a consumer
 	// that turns it into damage has to travel its own decision as a command.
-	private void Fire(int hand, double alongMps)
+	// RETURNS WHETHER IT WAS SENT. SendNetworkEvent returns false having sent
+	// nothing when gamestate is not GS_LEVEL or GS_TITLELEVEL (events.zs says
+	// so above the declaration, in capitals). Ignoring that armed the refire
+	// lockout for an event that was never written.
+	private bool Fire(int hand, double alongMps)
 	{
+		if (!SendNetworkEvent("rsg_thrust", hand, int(round(alongMps * 100.0)), 0))
+			return false;
 		if (BoolOf(cvDebug, false))
 			Console.Printf("\c[Gold]rsg: thrust, %s hand, %.2f m/s along it",
 				hand == HAND_MAIN ? "main" : "off", alongMps);
-		SendNetworkEvent("rsg_thrust", hand, int(round(alongMps * 100.0)), 0);
+		return true;
 	}
 }

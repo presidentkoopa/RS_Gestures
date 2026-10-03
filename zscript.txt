@@ -8,6 +8,7 @@ version "4.12"
 
 #include "zscript/rsg_capture.zs"
 #include "zscript/rsg_signals.zs"
+#include "zscript/rsg_pair.zs"
 #include "zscript/rsg_record.zs"
 #include "zscript/rsg_match.zs"
 #include "zscript/rsg_demo_actions.zs"

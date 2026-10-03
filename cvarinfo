@@ -106,4 +106,109 @@ user int   rsg_thrust_repeat = 12;
 // BELOW THIS, IN METRES A SECOND, A HAND COUNTS AS STILL -- which is a
 // different question from a pose being held: a palm held open while the arm
 // swings is open and is not still.
+//
+// SHARED WITH THE TWO-HAND PALMS POSE BELOW, deliberately. A second number for
+// the same idea would drift from this one and the player would be handed two
+// dials that both mean "how still is still". A hand in VR is never actually
+// still, so this has to stay reachable: a player whose tremor sits above it can
+// never hold a pose and has no way to find out why.
 user float rsg_still_mps = 0.3;
+
+// --------------------------------------------------------------- two hands --
+// BOTH HANDS AT ONCE: swept down past the hips, thrown outward from the chest,
+// or held out open and still. See zscript/rsg_pair.zs. These are a third kind
+// again -- not a shape (there are two paths, and the matcher reads one ring) and
+// not a pose (one hand's fields say nothing about the other hand's timing) --
+// and all three fire the one event, rsg_pair, as an index and a magnitude.
+//
+// EVERYTHING HERE IS METRES, METRES A SECOND, OR REAL MILLISECONDS. Nothing is
+// in map units, and nothing is in map tics. Map units are anisotropic, so a
+// vertical threshold in them is about a fifth off a horizontal one, and these
+// gestures are mostly vertical. Map tics stretch in slow motion, so a tolerance
+// in them would mean a different real tolerance at every time scale. And
+// everything vertical is measured from the HEADSET, so a short player, a tall
+// player and a seated player perform the same gesture rather than three
+// different ones.
+//
+// Off by default, and separately from both rsg_enabled and rsg_signals.
+user bool  rsg_twohand = false;
+
+// HOW FAR APART IN TIME TWO HANDS MAY BE AND STILL COUNT AS ONE GESTURE, in
+// REAL milliseconds. THIS IS THE DIAL. Two hands swept down 400 ms apart are
+// two movements; the same two 60 ms apart are one, and the number that divides
+// them is a property of a particular person's arms -- which is why nobody can
+// guess it and why it is here rather than in the code.
+//
+// It is compared between the two MOVEMENTS, not the two tics they were noticed
+// on: HandPeakAgeMs gives each hand's fastest instant its own real time first.
+// TURN IT UP when a two-hand gesture you are performing refuses to fire. Turn
+// it DOWN when one hand plus a twitch of the other is firing one.
+user float rsg_two_window_ms = 120.0;
+
+// HOW FRESH EACH HAND'S FASTEST INSTANT MUST BE, in milliseconds. RS_HAND_PEAK
+// is the fastest sample in a 250 ms ring, so without a cap a hand that moved
+// once and stopped keeps reporting that instant for a quarter of a second.
+// Looser than rsg_thrust_age because a two-handed heave is a slower and
+// sloppier movement than a one-handed jab.
+//
+// 0 does not check, and the engine's own ring (vr_hand_window_ms, 250 ms) is
+// then the oldest a peak can be, so that is what the staleness bound behind the
+// pairing window falls back to. It has to fall back to something real: that
+// bound is the only thing that stops two stamps pairing forever, and deriving
+// it from this number alone made 0 mean "no two-hand sweep or throw ever fires
+// again", which is not what switching a cap off should mean.
+user float rsg_two_age = 180.0;
+
+// REAL MILLISECONDS BEFORE THE SAME GESTURE MAY FIRE AGAIN. Not balance -- an
+// anti-double-fire, because one human sweep passes the test on many consecutive
+// tics. Real, not map, so it does not stretch in slow motion.
+user float rsg_two_repeat_ms = 500.0;
+
+// ---- both hands swept down past the hips ----------------------------------
+// HOW FAST EACH HAND MUST BE GOING DOWNWARD, in metres a second.
+user float rsg_two_down_mps = 2.0;
+
+// ...AND HOW MUCH OF THAT HAND'S SPEED HAS TO BE THE DOWNWARD PART, 0 to 1. A
+// speed threshold with no direction test fires on any fast arm movement, and a
+// sword fight is nothing but fast arm movement. 0.5 is about 60 degrees off
+// straight down. Raise it to demand a cleaner sweep.
+user float rsg_two_down_frac = 0.5;
+
+// HOW FAR BELOW THE HEADSET THE HIP LINE IS, in metres. A hand has to end up
+// under it for a sweep to count. Standing eyes sit about 0.65 m above the hips
+// and a seated player rather less, which is the whole reason this is measured
+// from the head and not from the floor.
+//
+// ALSO THE FLOOR FOR THE PALMS POSE below, so a hand dangling open at your side
+// is not half of a held pose. One number, so the two can never disagree about
+// where a hip is.
+user float rsg_two_hip_m = 0.60;
+
+// ---- both hands thrown outward from the chest -----------------------------
+// HOW FAST THE GAP BETWEEN THE HANDS MUST BE OPENING, in metres a second. It is
+// the PAIR's number and each hand is asked for half of it: two hands going
+// outward at half the threshold are separating at all of it. The gap opening is
+// what tells this gesture from a two-handed shove -- two hands thrust FORWARD
+// together are both leaving the chest and are not coming apart at all.
+user float rsg_two_apart_mps = 2.0;
+
+// HOW FAR BELOW THE HEADSET THE CHEST IS, in metres, and HOW NEAR IT A HAND
+// MUST BE to be throwing from it. The radius is a ceiling, not a shell: the
+// peak is up to rsg_two_age old, so by the time the throw is seen the hand has
+// already left. What it really refuses is a hand thrown from the hip or from
+// above the head.
+user float rsg_two_chest_m = 0.40;
+user float rsg_two_chest_r = 0.50;
+
+// ---- both palms held out --------------------------------------------------
+// HOW FAR IN FRONT OF THE HEADSET A PALM MUST BE, in metres, measured in the
+// body's own frame so that it means "in front of you" and not "north". A hand
+// resting open at your side is not a barrier.
+user float rsg_two_front_m = 0.25;
+
+// HOW LONG BOTH PALMS MUST BE OUT, OPEN AND STILL, in REAL milliseconds. The
+// clock starts when the SECOND palm arrives, so the first hand getting there
+// early earns nothing. The event is the onset only; a power that lasts while
+// the palms are up follows RSG_TwoHand.PalmsOutSeconds() rather than waiting
+// for a second event that is never coming.
+user float rsg_two_hold_ms = 400.0;

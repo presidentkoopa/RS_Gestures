@@ -20,6 +20,56 @@ OptionMenu "RSGMain"
 	Submenu "Entry and exit", "RSGEntry"
 	Submenu "Matching", "RSGMatch"
 	Submenu "Record your own", "RSGRecord"
+	StaticText ""
+	Submenu "Two-hand gestures", "RSGTwoHand"
+}
+
+// BOTH HANDS AT ONCE, and every dial here is a number nobody can guess from a
+// desk: how together is together, and where your own hips are. Metres and
+// milliseconds throughout -- a slider in map units cannot be reasoned about by
+// the person moving the arm.
+OptionMenu "RSGTwoHand"
+{
+	Title "Two-hand gestures"
+	StaticText "Both hands swept down past the hips. Both", "gray"
+	StaticText "hands thrown outward from the chest. Both", "gray"
+	StaticText "palms held out, open and still.", "gray"
+	StaticText ""
+	StaticText "Heights are measured from your HEADSET, so", "gray"
+	StaticText "sitting down and standing up are the same", "gray"
+	StaticText "gesture.", "gray"
+	StaticText ""
+	Option "Enabled", "rsg_twohand", "OnOff"
+	StaticText ""
+	Slider "Together within (ms)", "rsg_two_window_ms", 20, 400, 10, 0
+	StaticText "THE DIAL. Turn it UP when a gesture you are", "gold"
+	StaticText "performing will not fire. Turn it DOWN when one", "gold"
+	StaticText "hand plus a twitch of the other is firing one.", "gold"
+	StaticText ""
+	Slider "Peak must be fresher than (ms)", "rsg_two_age", 0, 250, 10, 0
+	Slider "Refire no sooner than (ms)", "rsg_two_repeat_ms", 0, 2000, 50, 0
+	StaticText ""
+	StaticText "Both hands down past the hips", "gold"
+	Slider "Downward speed (m/s)", "rsg_two_down_mps", 0.5, 8.0, 0.1, 1
+	Slider "How straight down", "rsg_two_down_frac", 0.0, 1.0, 0.05, 2
+	Slider "Hips below the headset (m)", "rsg_two_hip_m", 0.2, 1.2, 0.05, 2
+	StaticText ""
+	StaticText "Both hands thrown outward", "gold"
+	Slider "Hands coming apart (m/s)", "rsg_two_apart_mps", 0.5, 8.0, 0.1, 1
+	Slider "Chest below the headset (m)", "rsg_two_chest_m", 0.1, 0.8, 0.05, 2
+	Slider "Thrown from within (m)", "rsg_two_chest_r", 0.2, 1.0, 0.05, 2
+	StaticText ""
+	StaticText "Both palms held out", "gold"
+	Slider "In front of the headset (m)", "rsg_two_front_m", 0.0, 0.8, 0.05, 2
+	Slider "Held for (ms)", "rsg_two_hold_ms", 100, 2000, 50, 0
+	Slider "Still is under (m/s)", "rsg_still_mps", 0.05, 1.5, 0.05, 2
+	StaticText "Stillness is shared with the one-hand poses --", "gray"
+	StaticText "one number for one idea. A hand in VR is never", "gray"
+	StaticText "actually still, so raise it if you can never", "gray"
+	StaticText "hold the pose.", "gray"
+	StaticText ""
+	StaticText "Debug printing shows every number here live,", "gray"
+	StaticText "once a second, in these same units.", "gray"
 }
 
 OptionMenu "RSGRecord"
