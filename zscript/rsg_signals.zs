@@ -145,9 +145,15 @@ class RSG_Signals : EventHandler
 		return touch == 0 && grip < 0.2 && trig < 0.1;
 	}
 
-	// A FIST: the complement, and not merely "not an open palm" -- a hand
-	// resting on a thumb rest with the grip loose is neither.
-	static bool Fist(Actor pawn, int hand)
+	// A CLOSED HAND: the complement, and not merely "not an open palm" -- a
+	// hand resting on a thumb rest with the grip loose is neither.
+	//
+	// NOT NAMED `Fist`, deliberately. `Fist` is Doom's own weapon class, and
+	// ZScript identifiers are case-insensitive, so a member named Fist beside a
+	// class named Fist is the same family of trap as a field called `line`
+	// shadowing the Line type. It may well compile; it is not worth finding out
+	// at class-load, where the failure takes every pk3 after this one with it.
+	static bool Closed(Actor pawn, int hand)
 	{
 		if (!pawn) return false;
 		double grip = (hand == HAND_MAIN) ? pawn.GripValueMain : pawn.GripValueOff;
