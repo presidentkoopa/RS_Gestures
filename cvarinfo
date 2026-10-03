@@ -69,3 +69,41 @@ user string rsg_custom_1 = "";
 user string rsg_custom_2 = "";
 user string rsg_custom_3 = "";
 user string rsg_custom_4 = "";
+
+// ---------------------------------------------------------------- signals --
+// POSES AND IMPULSES, which are the gestures that are not shapes: an open palm
+// held, a hand held still, a thrust along the hand's own axis. See
+// zscript/rsg_signals.zs for why these cannot be templates in the matcher --
+// a pose has no path to normalise, and a hard thrust and a gentle one are the
+// same shape.
+//
+// SEPARATE FROM rsg_enabled, and off by default like it. The QUERIES in
+// RSG_Signals are static and read nothing but engine fields, so they keep
+// working with this off; what this switch buys is the held-pose counters and
+// the rsg_thrust event. A mod that asks the queries directly needs neither.
+user bool  rsg_signals = false;
+
+// HOW FAST A HAND MUST MOVE ALONG ITS OWN FORWARD AXIS, IN METRES A SECOND,
+// before rsg_thrust is fired. Metres, not map units: map space is anisotropic
+// (level.pixelstretch stretches the vertical), so a threshold in map units
+// means a different real thrust depending which way the hand went. RSG_Signals
+// converts to metric space before it measures, which is most of the reason
+// that file exists. A thrust in Doom units is also a number nobody can
+// picture.
+user float rsg_thrust_mps = 2.0;
+
+// ...AND HOW FRESH THAT PEAK MUST BE, in milliseconds. RS_HAND_PEAK is the
+// fastest sample in a 250 ms ring, so without this a hand that thrust once and
+// stopped keeps reporting that fast instant for a quarter of a second. 0 does
+// not check.
+user float rsg_thrust_age = 150.0;
+
+// TICS BEFORE THE SAME HAND MAY FIRE rsg_thrust AGAIN. Not a cooldown for
+// balance -- an anti-double-fire, because one human thrust spans several tics
+// and passes the test on every one of them.
+user int   rsg_thrust_repeat = 12;
+
+// BELOW THIS, IN METRES A SECOND, A HAND COUNTS AS STILL -- which is a
+// different question from a pose being held: a palm held open while the arm
+// swings is open and is not still.
+user float rsg_still_mps = 0.3;

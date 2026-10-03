@@ -5,5 +5,5 @@
 // not have to drag the matcher in with it.
 GameInfo
 {
-	AddEventHandlers = "RSG_Capture", "RSG_Matcher", "RSG_DemoActions"
+	AddEventHandlers = "RSG_Capture", "RSG_Signals", "RSG_Matcher", "RSG_DemoActions"
 }
