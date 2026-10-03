@@ -18,68 +18,39 @@ $include = @('zscript', 'zscript.txt', 'cvarinfo', 'mapinfo', 'menudef')
 
 # ---- A NAME GATE, BEFORE ANYTHING IS PACKED -------------------------------------------------------
 #
-# ZSCRIPT IDENTIFIERS ARE CASE-INSENSITIVE, which produces two failures that look nothing like each
-# other on the page and both of which refuse the class AT LOAD -- taking every pk3 after this one
-# down with it:
+# tools/zscript_namecheck.py. It refuses a name the engine's own lexer has already taken -- as a
+# field, a local, a parameter, a method or a class -- and a class-scope field sharing a name with a
+# method case-insensitively. Each of those refuses its class AT LOAD, which takes every pk3 after it
+# down with it.
 #
-#   1. A STATE KEYWORD USED AS A NAME. `stop`, `wait`, `loop`, `fail`, `goto`, `light`, `offset`,
-#      `frame`, `sprite`, `line`, `until` are reserved EVERYWHERE, not only inside a States block.
-#      `double stop = ...` is "Unexpected 'stop'" -- and because the declaration fails, the name then
-#      does not exist at its USE, so one slip gives two errors and the second is twenty lines from
-#      anything suspicious. This applies to LOCALS as much as to fields.
+# IT DERIVES ITS VOCABULARY FROM src/common/engine/sc_man_tokens.h RATHER THAN FROM A LIST, and that
+# is the whole reason it replaced the version that used to live here. The old one carried eleven
+# words collected from the failures that had actually happened, and it then PASSED
+# `static void Stop(...)` -- a word already on its own list -- because the SHAPE it matched was a
+# declaration, `type name =`, and a method is `type name (`. It had been built from the shape of the
+# last failure instead of from the rule. A list nobody maintains goes stale; the engine's token table
+# cannot.
 #
-#   2. A CLASS-SCOPE FIELD AND A METHOD SHARING A NAME. `private double points;` beside
-#      `double Points()` is "Attempt to redefine 'points'". Different case, different KIND of thing,
-#      still one name.
+# THE TOOL LIVES IN RS_StarWars because that is where it was written and one copy is the point.
+# A missing tool is skipped, so this pack still builds on a machine without that repo.
 #
-# THE SECOND CHECK IS CLASS SCOPE ONLY, and that distinction is the whole difficulty: a LOCAL may
-# share a name with a method perfectly legally, and this pack has three that do and compile green
-# (`caught`, `swing`, `inhand`). A gate that flagged those would be a gate nobody ran. So brace depth
-# is tracked, and only declarations at depth 1 -- the class body -- count as fields.
-#
-# IT IS A GATE AND NOT A NOTE BECAUSE I WROTE THE NOTE AND BROKE THE RULE AN HOUR LATER, in a file
-# created after I had run the sweep by hand. Five of these cost a compile each in one night: until,
-# line, HOOK/hook, stop, and points/Points. A check that depends on remembering to run it is not a
-# check.
-$reserved = @('stop','wait','loop','fail','goto','light','offset','frame','sprite','line','until')
-$types    = 'double|int|bool|String|Name|Actor|Color|Vector3|Vector2|CVar|uint|float|let'
-$nameErrs = @()
-foreach ($zs in (Get-ChildItem (Join-Path $root 'zscript') -Recurse -File -Filter *.zs)) {
-    $text  = Get-Content $zs.FullName
-    $flds  = @{}
-    $meths = @{}
-    $depth = 0
-    for ($i = 0; $i -lt $text.Count; $i++) {
-        $l = $text[$i]
-        if ($l.TrimStart().StartsWith('//')) { continue }
-        $bare = $l -replace '//.*$', ''
-        $declDepth = $depth           # the depth this line is declared AT, before its own braces
-        $depth += ([regex]::Matches($bare, '\{')).Count - ([regex]::Matches($bare, '\}')).Count
-
-        if ($bare -match "(?:^|\s)(?:$types)\s+([A-Za-z_]\w*)\s*(?:\[\s*\d*\s*\])?\s*[;,=]") {
-            $n = $Matches[1]
-            # A RESERVED WORD IS FATAL AT ANY DEPTH -- a local named `stop` refuses just as hard.
-            if ($reserved -contains $n.ToLower()) {
-                $nameErrs += "$($zs.Name):$($i+1)  '$n' is a ZScript state keyword and cannot be a name"
-            }
-            # ...but only a CLASS-SCOPE declaration can collide with a method name.
-            if ($declDepth -eq 1) { $flds[$n.ToLower()] = $i + 1 }
+# PYTHON IS NOT A HARD REQUIREMENT OF THIS BUILD, so a missing interpreter WARNS rather than fails.
+# A real name problem does fail.
+$namecheck = 'E:\DOOMWork\RS_StarWars\tools\zscript_namecheck.py'
+if (Test-Path $namecheck) {
+    $py = (Get-Command python -ErrorAction SilentlyContinue)
+    if (-not $py) { $py = (Get-Command py -ErrorAction SilentlyContinue) }
+    if ($py) {
+        $nc = & $py.Source $namecheck $root 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            $nc | ForEach-Object { Write-Output "  $_" }
+            throw "name gate failed -- each of these refuses its class AT LOAD"
         }
-        if ($declDepth -eq 1 -and $bare -match '^\s*(?:static\s+|private\s+|override\s+|virtual\s+|clearscope\s+|play\s+|ui\s+)*[A-Za-z0-9_<>]+\s+([A-Za-z_]\w*)\s*\(') {
-            $meths[$Matches[1].ToLower()] = $i + 1
-        }
-    }
-    foreach ($k in $meths.Keys) {
-        if ($flds.ContainsKey($k)) {
-            $nameErrs += "$($zs.Name): '$k' is both a field (line $($flds[$k])) and a method (line $($meths[$k])) -- identifiers are case-insensitive"
-        }
+        Write-Output "name gate passed"
+    } else {
+        Write-Output "name gate SKIPPED -- no python on this machine"
     }
 }
-if ($nameErrs.Count -gt 0) {
-    $nameErrs | ForEach-Object { Write-Output "  NAME: $_" }
-    throw "name gate failed: $($nameErrs.Count) problem(s) that would refuse a class AT LOAD"
-}
-Write-Output "name gate passed"
 
 $files = @()
 foreach ($i in $include) {
