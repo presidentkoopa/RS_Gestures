@@ -115,6 +115,15 @@ class RSG_Normalizer play
 
 	// Hand position relative to the head at that same instant, with the head's
 	// yaw rotated out.
+	//
+	// [BODYFRAME] THIS ONE STAYS ON THE HEAD, DELIBERATELY (2026-10-17). RSG_TwoHand.BodyMetric
+	// was moved to VRAvatarTable.BodyYaw() because a live gesture should not change when the
+	// player glances sideways. This function is the other half: it normalises RECORDED strokes
+	// as well as live ones, and every gesture already in the owner's library was captured in
+	// the head frame. Changing the frame here would re-normalise the live stroke without
+	// re-normalising what it is compared against, so authored gestures would quietly stop
+	// matching -- a regression with no error message anywhere. Re-recording the library is the
+	// price of changing this, and that is the owner's call, not a tidy-up.
 	static Vector3 BodyRelative(RSG_Ring ring, int age)
 	{
 		Vector3 hand = ring.HandPos(age);

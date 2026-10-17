@@ -307,6 +307,24 @@ class RSG_Signals : EventHandler
 			// whenever nothing is slowed, so the cvar still reads in tics.
 			if (level.realtime - lastImpulse[hand] < repeat) continue;
 			if (ageCap > 0 && level.HandPeakAgeMs(hand) > ageCap) continue;
+			// [RSG_PULL] THE SAME MEASUREMENT, THE OTHER WAY ALONG THE AXIS.
+			//
+			// Only a positive `along` was ever announced, so "shoved forward" had an event and
+			// "pulled back" had none -- and pulled-back is the whole input for a recall, a
+			// yank and anything else that asks the player to take his hand AWAY from
+			// something. A consumer was left to re-derive it from the raw hand velocity, which
+			// is how two mods end up with two thresholds for one gesture.
+			//
+			// It is a separate event rather than a signed magnitude on rsg_thrust because a
+			// listener wired to "thrust" must not start firing when the player pulls back; a
+			// name it has never heard of is ignored, a sign it has never checked is not.
+			if (along <= -needMps)
+			{
+				if (FirePull(hand, -along))
+					lastImpulse[hand] = level.realtime;
+				continue;
+			}
+
 			if (along < needMps) continue;
 
 			// AND THE LOCKOUT IS ARMED BY THE SEND, not ahead of it: Fire()
@@ -336,6 +354,20 @@ class RSG_Signals : EventHandler
 	// nothing when gamestate is not GS_LEVEL or GS_TITLELEVEL (events.zs says
 	// so above the declaration, in capitals). Ignoring that armed the refire
 	// lockout for an event that was never written.
+	// [RSG_PULL] The pull. Same three args, same hundredths, same "a consumer must decide what
+	// this means" contract as Fire below -- the magnitude is the speed AWAY along the axis, as
+	// a positive number, because a listener should not have to know the sign convention of a
+	// gesture it is only reacting to.
+	private bool FirePull(int hand, double alongMps)
+	{
+		if (!SendNetworkEvent("rsg_pull", hand, int(round(alongMps * 100.0)), 0))
+			return false;
+		if (BoolOf(cvDebug, false))
+			Console.Printf("\c[Gold]rsg: pull, %s hand, %.2f m/s back along it",
+				hand == HAND_MAIN ? "main" : "off", alongMps);
+		return true;
+	}
+
 	private bool Fire(int hand, double alongMps)
 	{
 		if (!SendNetworkEvent("rsg_thrust", hand, int(round(alongMps * 100.0)), 0))

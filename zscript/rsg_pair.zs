@@ -239,9 +239,23 @@ class RSG_TwoHand : EventHandler
 	{
 		if (!pawn) return (0, 0, 0);
 		Vector3 d = mapPoint - pawn.HmdPos;
-		// Un-rotate by head yaw about Z, degrees, as the matcher does.
-		double cs = cos(-pawn.HmdYaw);
-		double sn = sin(-pawn.HmdYaw);
+
+		// [BODYFRAME] THE BODY'S HEADING, NOT THE HEAD'S.
+		//
+		// This un-rotated by HmdYaw and called the result a body frame. It is not one: turning
+		// your HEAD while making a two-hand gesture then changes the gesture, so a shove made
+		// while glancing to the side is measured as a shove to the side. The owner's complaint
+		// about gestures firing when he did not mean them has this shape.
+		//
+		// VRAvatarTable.BodyYaw() is the engine's single answer, and its own note says why it
+		// exists: three riders grew three body-yaw formulas that agree until the player turns
+		// and then quietly do not. It is STATE -- it integrates stick turn and easing -- so it
+		// cannot be recomputed from the pawn. Zero means nothing has driven it yet, and the
+		// head is then the honest stand-in rather than a frame rotated by nothing.
+		double bodyYaw = VRAvatarTable.BodyYaw();
+		double useYaw = (bodyYaw != 0.0) ? bodyYaw : pawn.HmdYaw;
+		double cs = cos(-useYaw);
+		double sn = sin(-useYaw);
 		Vector3 turned = (d.x * cs - d.y * sn, d.x * sn + d.y * cs, d.z);
 		return RSG_Signals.Metric(turned);
 	}
